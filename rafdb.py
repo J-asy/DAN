@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument('--num_head', type=int, default=4, help='Number of attention head.')
     parser.add_argument('--load_model', type=str, default='models/rafdb_epoch21_acc0.897_bacc0.8532.pth', help='Load pretrained model on RAF-DB')
     parser.add_argument('--test_on', type=str, default='raf', help='Test on RAF DB or other dataset')
+    parser.add_argument('--cm_save_path', type=str, default='/content/DAN/confusion_matrices.txt', help='Path to save confusion matrix text file')
     return parser.parse_args()
 
 
@@ -163,6 +164,13 @@ class PartitionLoss(nn.Module):
             loss = 0
             
         return loss
+
+
+def write_cm_log(cm, save_path, mode, header):
+    conf_m_str = "\n" + header + "\n" + "".join([str(row) + "\n" for row in cm])
+    with open(save_path, mode) as f:
+      f.write(conf_m_str)
+
 
 def run_training():
     args = parse_args()
@@ -365,9 +373,12 @@ def run_testing():
         all_targets = all_targets.cpu()
         all_predictions = all_predictions.cpu()
         cm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6])
-        print(cm)
+        cm_norm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6], normalize='true')
+        
+        write_cm_log(cm, args.cm_save_path, "w", "Confusion matrix")
+        write_cm_log(cm_norm, args.cm_save_path, "a", "Confusion matrix(normalized)")
 
         
 if __name__ == "__main__":    
-    print("GOing")    
+    print("RUNning")    
     run_testing()
