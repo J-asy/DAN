@@ -32,6 +32,7 @@ def parse_args():
     parser.add_argument('--load_model', type=str, default='models/rafdb_epoch21_acc0.897_bacc0.8532.pth', help='Load pretrained model on RAF-DB')
     parser.add_argument('--test_on', type=str, default='raf', help='Test on RAF DB or other dataset')
     parser.add_argument('--cm_save_path', type=str, default='/content/DAN/', help='Path to save confusion matrix text file')
+    parser.add_argument('--mode', type=str, default='test', help='Set to train or test mode')
     return parser.parse_args()
 
 
@@ -166,7 +167,7 @@ class PartitionLoss(nn.Module):
         return loss
 
 
-def write_cm_log(cm, log_name, mode, norm):
+def write_cm_log(args, cm, log_name, mode, norm):
     if not norm:
         header = "Confusion matrix"
     else:
@@ -237,16 +238,21 @@ def run_training():
     optimizer = torch.optim.SGD(params,lr=args.lr, weight_decay = 1e-4, momentum=0.9)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
-
+    # write empty file
+    log_name = "train_log_"  + args.test_on
+    with open(os.path.join(args.cm_save_path, log_name), "w") as f:
+      f.write("")
 
     best_acc = 0
     for epoch in tqdm(range(1, args.epochs + 1)):
+        print("\nEpoch", epoch)
         running_loss = 0.0
         correct_sum = 0
         iter_cnt = 0
         model.train()
 
         for (imgs, targets) in train_loader:
+            print("   training ...")
             iter_cnt += 1
             optimizer.zero_grad()
 
@@ -273,6 +279,7 @@ def run_training():
         all_predictions = torch.Tensor().to(device)
         all_targets = torch.Tensor().to(device)
         with torch.no_grad():
+            print("   validating ...")
             running_loss = 0.0
             iter_cnt = 0
             bingo_cnt = 0
@@ -314,10 +321,12 @@ def run_training():
             cm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6])
             cm_norm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6], normalize='true')
         
-            write_cm_log(cm, "train_log", "a", norm=False)
-            write_cm_log(cm_norm, "train_log", "a", norm=True)
+            write_cm_log(args, cm, log_name, "a", norm=False)
+            write_cm_log(args, cm_norm, log_name, "a", norm=True)
 
             if acc > 0.89 and acc == best_acc:
+                if not os.path.isdir('checkpoints'):
+                    os.system('mkdir ' + 'checkpoints')
                 torch.save({'iter': epoch,
                             'model_state_dict': model.state_dict(),
                              'optimizer_state_dict': optimizer.state_dict(),},
@@ -402,10 +411,17 @@ def run_testing():
         cm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6])
         cm_norm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6], normalize='true')
         
-        write_cm_log(cm, "test_log", "w", norm=False)
-        write_cm_log(cm_norm, "test_log", "a", norm=True)
+        write_cm_log(args, cm, "test_log_" + args.test_on, "w", norm=False)
+        write_cm_log(args, cm_norm, "test_log_" + args.test_on, "a", norm=True)
 
+
+def driver():
+  args = parse_args()
+  if args.mode == "train":
+    run_training()
+  else:
+    run_testing()
         
 if __name__ == "__main__":    
     print("RUNning")    
-    run_testing()
+    driver()
