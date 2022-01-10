@@ -23,14 +23,54 @@ warnings.warn = warn
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--raf_path', type=str, default='datasets/raf-basic/', help='Raf-DB dataset path.')
+    parser.add_argument('--raf_path', type=str, default='/content/drive/MyDrive/FER/DAN/raf-basic/', help='Raf-DB dataset path.')
     parser.add_argument('--batch_size', type=int, default=256, help='Batch size.')
     parser.add_argument('--lr', type=float, default=0.1, help='Initial learning rate for sgd.')
     parser.add_argument('--workers', default=4, type=int, help='Number of data loading workers.')
     parser.add_argument('--epochs', type=int, default=40, help='Total training epochs.')
     parser.add_argument('--num_head', type=int, default=4, help='Number of attention head.')
-
+    parser.add_argument('--load_model', type=str, default='models/rafdb_epoch21_acc0.897_bacc0.8532.pth', help='Load pretrained model on RAF-DB')
+    parser.add_argument('--test_on', type=str, default='raf', help='Test on RAF DB or other dataset')
     return parser.parse_args()
+
+class EvpDataSet(data.Dataset):
+    def __init__(self, evp_path, phase, transform = None):
+        self.phase = phase
+        self.transform = transform
+        self.evp_path = evp_path
+
+        df = pd.read_csv(os.path.join(self.evp_path, 'EmoLabel/list_patition_label.txt'), sep=' ', header=None,names=['name','label'])
+
+        if phase == 'train':
+            self.data = df[df['name'].str.startswith('train')]
+        else:
+            self.data = df[df['name'].str.startswith('test')]
+
+        file_names = self.data.loc[:, 'name'].values
+        self.label = self.data.loc[:, 'label'].values - 1 # 0: Surprise, 1:Fear, 2:Disgust, 3:Happiness, 4:Sadness, 5:Anger, 6:Neutral
+
+        _, self.sample_counts = np.unique(self.label, return_counts=True)
+        # print(f' distribution of {phase} samples: {self.sample_counts}')
+
+        self.file_paths = []
+        for f in file_names:
+            f = f.split(".")[0]
+            f = f +"_aligned.jpg"
+            path = os.path.join(self.evp_path, 'Image/aligned', f)
+            self.file_paths.append(path)
+
+    def __len__(self):
+        return len(self.file_paths)
+
+    def __getitem__(self, idx):
+        path = self.file_paths[idx]
+        image = Image.open(path).convert('RGB')
+        label = self.label[idx]
+
+        if self.transform is not None:
+            image = self.transform(image)
+        
+        return image, label
 
 
 class RafDataSet(data.Dataset):
@@ -176,6 +216,7 @@ def run_training():
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
 
+
     best_acc = 0
     for epoch in tqdm(range(1, args.epochs + 1)):
         running_loss = 0.0
@@ -247,6 +288,71 @@ def run_training():
                             os.path.join('checkpoints', "rafdb_epoch"+str(epoch)+"_acc"+str(acc)+"_bacc"+str(bacc)+".pth"))
                 tqdm.write('Model saved.')
 
+
+def run_testing():
+    args = parse_args()
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.enabled = True
+
+    model = DAN(num_head=args.num_head)
+    model.to(device)
+    state_dict = torch.load(args.load_model)['model_state_dict']
+    model.load_state_dict(state_dict)
+
+    data_transforms_val = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])])   
+
+
+    if args.test_on == 'raf':
+        val_dataset = RafDataSet(args.raf_path, phase = 'test', transform = data_transforms_val)   
+    # else:
+
+
+    print('Test set size:', val_dataset.__len__())
+    
+    val_loader = torch.utils.data.DataLoader(val_dataset,
+                                               batch_size = args.batch_size,
+                                               num_workers = args.workers,
+                                               shuffle = False,  
+                                               pin_memory = True)
+
+    criterion_cls = torch.nn.CrossEntropyLoss()
+    criterion_af = AffinityLoss(device)
+    criterion_pt = PartitionLoss()
+
+    with torch.no_grad():
+        iter_cnt = 0
+        bingo_cnt = 0
+        sample_cnt = 0
+
+        model.eval()
+        for (imgs, targets) in val_loader:
+            print("iter", iter_cnt + 1)
+            imgs = imgs.to(device)
+            targets = targets.to(device)
+            
+            out,feat,heads = model(imgs)
+
+            iter_cnt+=1
+            _, predicts = torch.max(out, 1)
+            correct_num  = torch.eq(predicts,targets)
+            bingo_cnt += correct_num.sum().cpu()
+            sample_cnt += out.size(0)
+            
+        acc = bingo_cnt.float()/float(sample_cnt)
+        acc = np.around(acc.numpy(),4)
+
+        print("Validation accuracy: {}".format(acc))
         
-if __name__ == "__main__":        
-    run_training()
+
+        
+if __name__ == "__main__":    
+    print("GOing")    
+    run_testing()
