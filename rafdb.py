@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.utils.data as data
 from torchvision import transforms
-
+from sklearn.metrics import confusion_matrix
 
 from sklearn.metrics import balanced_accuracy_score
 
@@ -33,44 +33,52 @@ def parse_args():
     parser.add_argument('--test_on', type=str, default='raf', help='Test on RAF DB or other dataset')
     return parser.parse_args()
 
+
 class EvpDataSet(data.Dataset):
-    def __init__(self, evp_path, phase, transform = None):
-        self.phase = phase
+    def __init__(self, evp_path, transform = None):
         self.transform = transform
         self.evp_path = evp_path
+        self.txt_path = os.path.join(self.evp_path, 'dan-evp.txt')
 
-        df = pd.read_csv(os.path.join(self.evp_path, 'EmoLabel/list_patition_label.txt'), sep=' ', header=None,names=['name','label'])
-
-        if phase == 'train':
-            self.data = df[df['name'].str.startswith('train')]
-        else:
-            self.data = df[df['name'].str.startswith('test')]
-
-        file_names = self.data.loc[:, 'name'].values
-        self.label = self.data.loc[:, 'label'].values - 1 # 0: Surprise, 1:Fear, 2:Disgust, 3:Happiness, 4:Sadness, 5:Anger, 6:Neutral
-
+        self.file_paths, self.label = self.parse_file(self.txt_path)
+        
         _, self.sample_counts = np.unique(self.label, return_counts=True)
-        # print(f' distribution of {phase} samples: {self.sample_counts}')
-
-        self.file_paths = []
-        for f in file_names:
-            f = f.split(".")[0]
-            f = f +"_aligned.jpg"
-            path = os.path.join(self.evp_path, 'Image/aligned', f)
-            self.file_paths.append(path)
+        
 
     def __len__(self):
         return len(self.file_paths)
 
     def __getitem__(self, idx):
         path = self.file_paths[idx]
-        image = Image.open(path).convert('RGB')
+        image = Image.open(path).convert('RGB')        
         label = self.label[idx]
 
         if self.transform is not None:
             image = self.transform(image)
-        
+           
         return image, label
+
+    def parse_file(self, txt_path):
+      file_names = []
+      labels = np.array([])
+      with open(txt_path, "r") as f:
+        contents = f.read().splitlines()
+      
+      i = 0
+      while i < len(contents):
+        if contents[i] == "vid_dir":
+          root_path = contents[i + 1]
+          i += 2
+        
+        fname, label = contents[i].split()
+        file_names += [os.path.join(root_path, fname)]
+        labels = np.append(labels, int(label))
+        i += 1
+
+      assert len(file_names) == len(labels), "Length of images not equal to labels"
+      return file_names, labels
+
+
 
 
 class RafDataSet(data.Dataset):
@@ -109,7 +117,7 @@ class RafDataSet(data.Dataset):
 
         if self.transform is not None:
             image = self.transform(image)
-        
+
         return image, label
 
 class AffinityLoss(nn.Module):
@@ -312,8 +320,8 @@ def run_testing():
 
     if args.test_on == 'raf':
         val_dataset = RafDataSet(args.raf_path, phase = 'test', transform = data_transforms_val)   
-    # else:
-
+    else:
+        val_dataset = EvpDataSet('/content/drive/MyDrive/FER/DAN/', transform = data_transforms_val)
 
     print('Test set size:', val_dataset.__len__())
     
@@ -327,22 +335,26 @@ def run_testing():
     criterion_af = AffinityLoss(device)
     criterion_pt = PartitionLoss()
 
+    all_predictions = torch.Tensor().to(device)
+    all_targets = torch.Tensor().to(device)
     with torch.no_grad():
         iter_cnt = 0
         bingo_cnt = 0
         sample_cnt = 0
-
+        
         model.eval()
         for (imgs, targets) in val_loader:
             print("iter", iter_cnt + 1)
             imgs = imgs.to(device)
-            targets = targets.to(device)
-            
+            targets = targets.to(device)    
             out,feat,heads = model(imgs)
 
             iter_cnt+=1
             _, predicts = torch.max(out, 1)
             correct_num  = torch.eq(predicts,targets)
+            all_predictions = torch.cat((all_predictions, predicts), dim=0)
+            all_targets = torch.cat((all_targets, targets), dim=0)
+
             bingo_cnt += correct_num.sum().cpu()
             sample_cnt += out.size(0)
             
@@ -350,7 +362,10 @@ def run_testing():
         acc = np.around(acc.numpy(),4)
 
         print("Validation accuracy: {}".format(acc))
-        
+        all_targets = all_targets.cpu()
+        all_predictions = all_predictions.cpu()
+        cm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6])
+        print(cm)
 
         
 if __name__ == "__main__":    
