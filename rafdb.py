@@ -31,7 +31,7 @@ def parse_args():
     parser.add_argument('--num_head', type=int, default=4, help='Number of attention head.')
     parser.add_argument('--load_model', type=str, default='models/rafdb_epoch21_acc0.897_bacc0.8532.pth', help='Load pretrained model on RAF-DB')
     parser.add_argument('--test_on', type=str, default='raf', help='Test on RAF DB or other dataset')
-    parser.add_argument('--cm_save_path', type=str, default='/content/DAN/confusion_matrices.txt', help='Path to save confusion matrix text file')
+    parser.add_argument('--cm_save_path', type=str, default='/content/DAN/', help='Path to save confusion matrix text file')
     return parser.parse_args()
 
 
@@ -166,9 +166,15 @@ class PartitionLoss(nn.Module):
         return loss
 
 
-def write_cm_log(cm, save_path, mode, header):
+def write_cm_log(cm, log_name, mode, norm):
+    if not norm:
+        header = "Confusion matrix"
+    else:
+        header = "Confusion matrix(normalized)"
+        cm = np.around(cm, 4)
+        
     conf_m_str = "\n" + header + "\n" + "".join([str(row) + "\n" for row in cm])
-    with open(save_path, mode) as f:
+    with open(os.path.join(args.cm_save_path, log_name), mode) as f:
       f.write(conf_m_str)
 
 
@@ -262,7 +268,10 @@ def run_training():
         acc = correct_sum.float() / float(train_dataset.__len__())
         running_loss = running_loss/iter_cnt
         tqdm.write('[Epoch %d] Training accuracy: %.4f. Loss: %.3f. LR %.6f' % (epoch, acc, running_loss,optimizer.param_groups[0]['lr']))
+
         
+        all_predictions = torch.Tensor().to(device)
+        all_targets = torch.Tensor().to(device)
         with torch.no_grad():
             running_loss = 0.0
             iter_cnt = 0
@@ -282,6 +291,9 @@ def run_training():
                 iter_cnt+=1
                 _, predicts = torch.max(out, 1)
                 correct_num  = torch.eq(predicts,targets)
+                all_predictions = torch.cat((all_predictions, predicts), dim=0)
+                all_targets = torch.cat((all_targets, targets), dim=0)
+
                 bingo_cnt += correct_num.sum().cpu()
                 sample_cnt += out.size(0)
                 
@@ -292,10 +304,18 @@ def run_training():
             acc = bingo_cnt.float()/float(sample_cnt)
             acc = np.around(acc.numpy(),4)
             best_acc = max(acc,best_acc)
-
+            
             bacc = np.around(np.mean(baccs),4)
             tqdm.write("[Epoch %d] Validation accuracy:%.4f. bacc:%.4f. Loss:%.3f" % (epoch, acc, bacc, running_loss))
             tqdm.write("best_acc:" + str(best_acc))
+            
+            all_targets = all_targets.cpu()
+            all_predictions = all_predictions.cpu()
+            cm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6])
+            cm_norm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6], normalize='true')
+        
+            write_cm_log(cm, "train_log", "a", norm=False)
+            write_cm_log(cm_norm, "train_log", "a", norm=True)
 
             if acc > 0.89 and acc == best_acc:
                 torch.save({'iter': epoch,
@@ -303,6 +323,13 @@ def run_training():
                              'optimizer_state_dict': optimizer.state_dict(),},
                             os.path.join('checkpoints', "rafdb_epoch"+str(epoch)+"_acc"+str(acc)+"_bacc"+str(bacc)+".pth"))
                 tqdm.write('Model saved.')
+                
+            if epoch == args.epochs:
+                print("Confusion matrix")
+                print(cm)
+                
+                print("Confusion matrix (Normalized)")
+                print(cm_norm)
 
 
 def run_testing():
@@ -375,8 +402,8 @@ def run_testing():
         cm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6])
         cm_norm = confusion_matrix(all_targets, all_predictions, labels=[0,1,2,3,4,5,6], normalize='true')
         
-        write_cm_log(cm, args.cm_save_path, "w", "Confusion matrix")
-        write_cm_log(cm_norm, args.cm_save_path, "a", "Confusion matrix(normalized)")
+        write_cm_log(cm, "test_log", "w", norm=False)
+        write_cm_log(cm_norm, "test_log", "a", norm=True)
 
         
 if __name__ == "__main__":    
