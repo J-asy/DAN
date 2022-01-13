@@ -23,7 +23,7 @@ warnings.warn = warn
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--raf_path', type=str, default='/content/drive/MyDrive/FER/DAN/raf-basic/', help='Raf-DB dataset path.')
+    parser.add_argument('--raf_path', type=str, default='/content/drive/MyDrive/MeSelves/FER_complete/DAN/raf-basic/', help='Raf-DB dataset path.')
     parser.add_argument('--batch_size', type=int, default=256, help='Batch size.')
     parser.add_argument('--lr', type=float, default=0.1, help='Initial learning rate for sgd.')
     parser.add_argument('--workers', default=4, type=int, help='Number of data loading workers.')
@@ -365,7 +365,7 @@ def run_testing():
     if args.test_on == 'raf':
         val_dataset = RafDataSet(args.raf_path, phase = 'test', transform = data_transforms_val)   
     else:
-        val_dataset = EvpDataSet('/content/drive/MyDrive/FER/DAN/', transform = data_transforms_val)
+        val_dataset = EvpDataSet('/content/drive/MyDrive/MeSelves/FER_complete/DAN/', transform = data_transforms_val)
 
     print('Test set size:', val_dataset.__len__())
     
